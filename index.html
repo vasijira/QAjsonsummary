@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Advanced CRM Analyzer - SCG WEDO (Fixed)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Sarabun', sans-serif; }
+        .loading-spinner { border-top-color: #f97316; animation: spinner 1s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .accordion-content { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out; }
+        .accordion-open .accordion-content { max-height: 2000px; }
+        
+        /* สไตล์สีขอบตาม Sentiment */
+        .sentiment-positive { border-left: 8px solid #22c55e !important; }
+        .sentiment-negative { border-left: 8px solid #ef4444 !important; }
+        .sentiment-neutral { border-left: 8px solid #94a3b8 !important; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen pb-20">
+
+    <div class="max-w-6xl mx-auto p-4 md:p-8">
+        <header class="flex flex-col md:flex-row justify-between items-center mb-10 gap-6 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200">
+            <div class="flex items-center gap-5">
+                <div class="p-4 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl shadow-lg shadow-orange-200 text-white">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Advanced CRM Analyzer</h1>
+                    <p class="text-slate-500 text-sm">วิเคราะห์เชิงลึกด้วย do-gemini-3-flash-preview</p>
+                </div>
+            </div>
+            <div class="w-full md:w-80 group">
+                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1.5 ml-1 tracking-widest group-focus-within:text-orange-500 transition-colors">Enterprise Token</label>
+                <input type="password" id="apiKey" placeholder="วาง Bearer Token..." class="w-full px-5 py-3.5 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-orange-500 outline-none bg-slate-50 shadow-inner transition-all">
+            </div>
+        </header>
+
+        <div class="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm mb-10">
+            <div class="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-[2rem] p-12 hover:border-orange-400 hover:bg-orange-50/20 transition-all relative cursor-pointer group">
+                <input type="file" id="jsonInput" accept=".json" multiple class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-orange-100 group-hover:text-orange-500 transition-colors">
+                        <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                    </div>
+                    <p class="text-lg font-bold text-slate-700">เลือกไฟล์ JSON (เลือกได้หลายไฟล์พร้อมกัน)</p>
+                    <p id="fileCountLabel" class="text-sm text-slate-400 mt-2 font-medium italic">เลือกไฟล์เพื่อเริ่มต้นวิเคราะห์</p>
+                </div>
+            </div>
+            <button onclick="processAllFiles()" id="btnAnalyze" class="mt-8 w-full py-4 bg-slate-900 hover:bg-orange-600 text-white rounded-2xl font-bold transition-all transform hover:-translate-y-1 active:scale-95 flex justify-center items-center gap-3 shadow-xl shadow-slate-200 text-lg">
+                <span>เริ่มวิเคราะห์ข้อมูลเชิงลึก</span>
+            </button>
+        </div>
+
+        <div id="batchProgress" class="hidden mb-6 px-5 py-2.5 bg-orange-100 text-orange-700 rounded-full text-xs font-bold inline-flex items-center gap-2">
+            <div class="loading-spinner border-2 border-orange-300 rounded-full w-3 h-3"></div>
+            <span id="progressText">กำลังวิเคราะห์...</span>
+        </div>
+
+        <div id="resultsContainer" class="space-y-6"></div>
+    </div>
+
+    <script>
+        const BASE_URL = "https://do-cap-litellm-dev.scg-wedo.tech".replace(/\/$/, "");
+        let selectedFiles = [];
+
+        document.getElementById('jsonInput').addEventListener('change', (e) => {
+            selectedFiles = Array.from(e.target.files);
+            document.getElementById('fileCountLabel').innerText = `เลือกแล้ว ${selectedFiles.length} ไฟล์ พร้อมประมวลผล`;
+        });
+
+        async function processAllFiles() {
+            const key = document.getElementById('apiKey').value;
+            if (!key) return alert("กรุณาระบุ Token ก่อนครับ");
+            if (selectedFiles.length === 0) return alert("กรุณาเลือกไฟล์ก่อนครับ");
+
+            const container = document.getElementById('resultsContainer');
+            container.innerHTML = ""; 
+            document.getElementById('batchProgress').classList.remove('hidden');
+
+            let count = 0;
+            for (let file of selectedFiles) {
+                count++;
+                document.getElementById('progressText').innerText = `กำลังวิเคราะห์ไฟล์ที่ ${count} จาก ${selectedFiles.length} (${file.name})`;
+                
+                const fileId = 'file-' + Math.random().toString(36).substr(2, 9);
+                createLoadingCard(container, fileId, file.name);
+
+                try {
+                    const content = await file.text();
+                    const summary = await getAIAdvancedSummary(content, key);
+                    updateFileUI(fileId, summary);
+                } catch (err) {
+                    updateFileUIError(fileId, err.message);
+                }
+            }
+            document.getElementById('batchProgress').classList.add('hidden');
+        }
+
+        async function getAIAdvancedSummary(content, key) {
+            const response = await fetch(`${BASE_URL}/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                body: JSON.stringify({
+                    model: "do-gemini-3-flash-preview",
+                    messages: [
+                        { 
+                            role: "system", 
+                            content: `คุณคือ AI ผู้เชี่ยวชาญด้าน CRM วิเคราะห์ข้อมูล Transcript นี้และสรุปเป็น JSON ภาษาไทยที่มีโครงสร้างดังนี้:
+                            { 
+                                "intent": "ความต้องการหลักสั้นๆ", 
+                                "category": "หมวดหมู่ (เช่น ร้องเรียน, สอบถามสินค้า, ยอดขาย, อื่นๆ)",
+                                "bullets": ["สรุปประเด็นเป็นข้อๆ สั้นและชัดเจน"], 
+                                "action_items": ["สิ่งที่ต้องทำต่อ หรือ Next Steps"],
+                                "sentiment": "ความรู้สึกหลัก (เชิงบวก/เชิงลบ/ปกติ)",
+                                "satisfaction_score": "คะแนน 1-5 (5 คือดีมาก)",
+                                "urgency": "ระดับความด่วน (ต่ำ/กลาง/สูง)"
+                            }` 
+                        },
+                        { role: "user", content: content }
+                    ],
+                    response_format: { type: "json_object" }
+                })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error?.message || "Gateway Connection Error");
+            return JSON.parse(data.choices[0].message.content);
+        }
+
+        function createLoadingCard(container, id, filename) {
+            const div = document.createElement('div');
+            div.id = id;
+            div.className = "bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden mb-4";
+            div.innerHTML = `
+                <div class="p-6 flex justify-between items-center bg-slate-50/50 italic">
+                    <span class="text-slate-500 font-bold text-sm">${filename}</span>
+                    <span class="animate-pulse text-xs text-orange-500 font-bold">AI กำลังอ่านข้อมูล...</span>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+
+        function updateFileUI(id, data) {
+            const card = document.getElementById(id);
+            
+            // ป้องกัน Error 'includes' โดยการเช็คความถูกต้องของข้อมูลก่อนเสมอ
+            const sentimentStr = (data.sentiment || "ปกติ").toString();
+            let sentimentClass = 'sentiment-neutral';
+            
+            if (sentimentStr.includes('ลบ')) sentimentClass = 'sentiment-negative';
+            else if (sentimentStr.includes('บวก')) sentimentClass = 'sentiment-positive';
+            
+            card.className = `bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden mb-6 ${sentimentClass}`;
+            card.innerHTML = `
+                <div class="p-6 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onclick="this.parentElement.classList.toggle('accordion-open')">
+                    <div class="flex items-center gap-4">
+                        <span class="px-3 py-1 bg-slate-900 text-white text-[10px] font-bold rounded-lg uppercase tracking-tight">${data.category || 'ทั่วไป'}</span>
+                        <h3 class="font-bold text-slate-800 text-lg">${data.intent || 'สรุปข้อมูล'}</h3>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <div class="text-right mr-4">
+                            <p class="text-[9px] uppercase font-bold text-slate-400 tracking-widest">Satisfaction</p>
+                            <p class="text-sm font-bold text-orange-500">${data.satisfaction_score || '-'}/5</p>
+                        </div>
+                        <svg class="w-5 h-5 text-slate-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
+                </div>
+                <div class="accordion-content border-t border-slate-50 bg-white">
+                    <div class="p-10">
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                            <div class="lg:col-span-2 space-y-8">
+                                <div>
+                                    <h4 class="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-4">สรุปใจความสำคัญ (Key Insights)</h4>
+                                    <ul class="space-y-4">
+                                        ${(data.bullets || []).length > 0 
+                                            ? data.bullets.map(b => `<li class="flex items-start gap-4 text-slate-600 leading-relaxed text-sm"><span class="mt-2 w-1.5 h-1.5 bg-orange-400 rounded-full shrink-0"></span> ${b}</li>`).join('')
+                                            : '<li class="text-slate-400 italic text-sm">ไม่มีข้อมูลสรุปจาก AI</li>'}
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h4 class="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-4">Action Items / Next Steps</h4>
+                                    <div class="flex flex-wrap gap-2">
+                                        ${(data.action_items || []).length > 0 
+                                            ? data.action_items.map(a => `<span class="px-4 py-2 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-xl border border-blue-100 italic">➔ ${a}</span>`).join('')
+                                            : '<span class="text-slate-400 text-xs italic">ไม่มีรายการที่ต้องดำเนินการต่อ</span>'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="lg:col-span-1 bg-slate-50 rounded-3xl p-8 space-y-6 self-start">
+                                <div>
+                                    <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider">อารมณ์ลูกค้า</p>
+                                    <p class="text-sm font-bold text-slate-700">${sentimentStr}</p>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider">ความเร่งด่วน</p>
+                                    <span class="px-3 py-1 ${(data.urgency || '').toString().includes('สูง') ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-700'} text-[10px] font-bold rounded-full uppercase italic tracking-tighter">${data.urgency || 'ปกติ'}</span>
+                                </div>
+                                <div class="pt-4 border-t border-slate-200">
+                                    <p class="text-[9px] text-slate-400 italic uppercase tracking-tighter">Analyzed via LiteLLM Gateway</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            // เปิด Accordion อัตโนมัติสำหรับไฟล์ที่วิเคราะห์เสร็จ
+            card.classList.add('accordion-open');
+        }
+
+        function updateFileUIError(id, msg) {
+            const card = document.getElementById(id);
+            card.className = "bg-red-50 rounded-[2rem] border border-red-100 shadow-sm overflow-hidden mb-6";
+            card.innerHTML = `
+                <div class="p-6 text-red-600 text-sm font-bold flex items-center gap-3">
+                    <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    วิเคราะห์ไม่สำเร็จ: ${msg}
+                </div>`;
+        }
+    </script>
+</body>
+</html>
